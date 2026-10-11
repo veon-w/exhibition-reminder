@@ -10,13 +10,18 @@
   - CWT(comicworld.com.tw):台灣同人誌販售會台北/台中/高雄場
 - **提醒(Android app 本地通知,不需要任何伺服器帳號)**
   - 開展日提醒
-  - 閉展前 14 天、3 天提醒(天數可調)
+  - 閉展前 14 天、3 天提醒(天數可調;順序填反會自動交換,不會靜默失效)
   - 開賣提醒:追蹤的展在 udn 出現同名檔期就通知;有開賣時間的檔期開賣前 N 天預告(可調)
   - 每週日摘要:本週新開展 + 兩週內閉展
   - 提醒只針對按 ★ 追蹤的展覽;單檔可靜音
-  - 可靠性:每日 09:00 精確鬧鐘(非純背景任務)+ 首啟引導加入省電白名單,對抗三星/小米激進省電
+  - 可靠性:每日 09:00 鬧鐘(非純背景任務)+ 首啟引導加入省電白名單,對抗三星/小米激進省電;
+    Android 12/12L 若系統未允許「鬧鐘與提醒」,設定頁會提示並提供一鍵前往開啟
 - **其他功能**:類別排序與顯示設定、地區複選篩選、免費入場篩選、**漫展/ACG 篩選**、離我近排序、
   一鍵加入行事曆、通知點擊直達展覽詳情、追蹤清單匯出/匯入(換手機)、亮/暗主題
+
+「離我近」按下去會**主動取一次目前位置**(不是只看上次快取)。取不到時會說明原因
+(定位關閉、沒有權限、暫時拿不到),不再像以前那樣按了完全沒反應。只用約略定位
+(`ACCESS_COARSE_LOCATION`),排序夠用且較省電。只在使用者按下該篩選時才要求定位。
 
 「漫展/ACG」是跨來源篩選:同人場來源(ff/cwt)整包算,其餘比對展名關鍵字
 (動漫/漫畫/電玩/電競/cosplay/潮流玩具…)。可以和類別、地區疊加,例如「漫展/ACG + 臺北市」。
@@ -140,6 +145,16 @@ keyPassword=你的密碼
 沒有金鑰檔時 `assembleRelease` 會退回用 debug 金鑰簽,可先測試。
 或用 Android Studio 開啟 `android/` 資料夾直接 Run(它會自己處理 JDK 和 SDK 路徑)。
 
+> **要上架 Google Play 的話先看這段。** manifest 宣告了 `USE_EXACT_ALARM`,這是
+> **受政策限制**的權限,只給「核心功能是鬧鐘/計時器,或行事曆/提醒」的 app,上架時要在
+> Play Console 另外填用途宣告。展覽追蹤算不算「提醒類 app」由審查員認定,有被退的風險。
+> 自己簽 APK 直接裝(本 README 的主要用法)完全不受影響。
+> 若哪天要上架而被打回,替代做法是拿掉 `USE_EXACT_ALARM`、改用
+> `SCHEDULE_EXACT_ALARM` + 引導使用者開啟,或接受不精確鬧鐘(設定頁會如實提示)。
+
+Android 12/12L(API 31–32)的 `SCHEDULE_EXACT_ALARM` 預設是關的,沒開會靜默降級成不精確鬧鐘。
+app 會在設定頁顯示提示與「開啟鬧鐘與提醒權限」按鈕(API 33+ 由 `USE_EXACT_ALARM` 自動授予,不會看到這個提示)。
+
 ### 6. App 首次設定
 
 1. 開啟 app → 允許通知權限,並依提示把 app 加入省電白名單(否則每日提醒會被系統擋掉)
@@ -150,11 +165,40 @@ keyPassword=你的密碼
 ## 日常維運
 
 - **不用做任何事**。Actions 每天自動跑,app 每天自動同步
-- 爬蟲壞了(來源網站改版):Actions 頁面會顯示紅色失敗;`sourceStatus` 會標 `stale`,app 內顯示「資料未更新」警示。修 `scraper/expo_scraper/sources/` 下對應檔案後 push 即可,app 不用重裝
-- 想多收類別:改 workflow 的執行參數。預設 `--moc-categories 6,17`(展覽+演唱會)、`--udn-categories 231,205`(展覽+演唱會);想加古典/管弦音樂會用 `--moc-categories 6,17,1`,udn 親子展加 `129`
+- 爬蟲壞了(來源網站改版)會**亮紅燈**:workflow 最後一步會讀 `sourceStatus`,只要有來源不是 `ok`
+  就讓該次執行失敗(部分失敗會先把檔案 commit 上去,才判紅燈,所以不會白跑一天)。
+  修 `scraper/expo_scraper/sources/` 下對應檔案後 push 即可,app 不用重裝
+- `sourceStatus` 會標 `stale`,但**app 不會為單一來源失敗跳警示** —— app 的「資料超過 2 天未更新」
+  看的是 `generatedAt`,來源掛掉時它照樣每天更新,所以那個警示不會亮。來源狀態只在設定頁以原始
+  字串顯示,單源失敗要靠 Actions 紅燈或自己去設定頁看
+- 想多收類別:到 repo 的 **Settings → Variables** 設 `MOC_CATEGORIES` / `UDN_CATEGORIES`
+  (workflow 會把它們當參數傳,預設 `6,17` = 展覽+演唱會、`231,205` = 展覽+演唱會)。
+  想加古典/管弦音樂會設 `6,17,1`,udn 親子展加 `129`
 - 大型流行演唱會(拓元/KKTIX 售票的小巨蛋等級)不在資料源內,文化部收錄的以中小型為主
 - 同人場(ff/cwt)兩個官網只掛「未來場次」,過去的場次會從頁面消失。reconcile 會把消失的
   標 `removedAt` 保留 60 天,不會直接刪掉,所以追蹤中的展不會無聲蒸發
+
+### 爬蟲的退出碼
+
+| 代碼 | 意義 | 檔案 | Actions |
+|---|---|---|---|
+| 0 | 五個來源都成功 | 寫出 | 綠燈 |
+| 2 | 部分來源失敗(該源沿用前次、標 `stale`) | **照樣寫出** | 紅燈 |
+| 1 | 全部來源失敗 | **不覆寫**(保留舊檔) | 紅燈 |
+
+排程偶爾會撞到別的 commit,所以 commit 前有 `git pull --rebase --autostash` 再 push,失敗會重試一次。
+
+### 前次資料檔讀壞了會怎樣
+
+改 schema(欄位改名、新增必填欄位)時,舊的 `exhibitions.json` 會跟不上新程式碼。處理方式是:
+
+- **舊檔某一筆多了不認識的欄位** → 忽略該欄位,其餘照用
+- **某一筆少了必要欄位** → 丟掉那一筆並印警告,其他筆照常保留(不會因為一筆壞掉就整支中斷)
+- **`removedAt` 不是合法日期** → 無法判斷保留期,選擇**保留**該筆(少刪勝過誤刪使用者的追蹤對象)
+- **整個檔案壞掉(JSON 不完整)** → 備份成 `exhibitions.json.bad` 後從零開始,今天照樣有資料;
+  備份留著讓你可以事後檢查
+
+以前這些都會讓爬蟲在**開始抓之前**就中斷,整個檔案從此停止更新。
 
 ## 資料格式(data/exhibitions.json)
 
@@ -167,10 +211,14 @@ keyPassword=你的密碼
   "exhibitions": [{
     "id": "moc:5b3dd5…",        // 穩定識別碼,app 訂閱綁這個
     "source": "moc|twtc|udn|ff|cwt",
+    "sourceId": "5b3dd5…",      // 該來源自己的 id(重抓/對帳用)
     "title": "…", "startDate": "2026-08-04", "endDate": "2028-12-31",
     "venueName": "…", "address": "…", "city": "臺中市", "lat": 24.15, "lng": 120.66,
     "organizer": "…", "category": "展覽|商展|同人展|演唱會",
     "priceText": "全票100元…", "onSales": "Y|N|UNKNOWN",
+    "saleStartAt": null,        // 開賣時間(ISO,只有 udn 有);開賣前 N 天提醒靠這個
+    "saleStartText": "",        // 開賣時間的原文(無法解析成時間時保留顯示用)
+    "openTime": "09:00", "closeTime": "17:00",   // 開放時間,閉展當天提醒會顯示
     "ticketUrl": "…", "officialUrl": "…", "imageUrl": "…",
     "descriptionShort": "…(≤200字)",
     "lastSeenAt": "…", "removedAt": null   // 從來源消失會標時間並保留 60 天,不直接刪
@@ -192,6 +240,14 @@ pip install -r requirements.txt
 python -m pytest tests/          # fixture 為真實網站回應
 python scrape.py --out ../data/exhibitions.json   # 本機實跑(會真的連五個網站)
 ```
+
+測試會在 Actions 每次跑爬蟲**之前**執行,沒過就不跑爬蟲。
+
+⚠️ **寫測試時不要寫死日期**。`reconcile` 會用 `today_taipei()` 讀系統日期來決定保留期
+(閉展超過 30 天、消失超過 60 天的項目會被移出),所以固定日期的樣本會在日子過去之後
+無聲地開始失敗。用 `tests/test_scraper.py` 裡的 `_day(offset)` / `_NOW_ISO` 相對日期helper。
+另外 `removedAt` 會被當成「移除時間」再算 60 天保留,傳過去的 `now_iso` 會讓項目一進來
+就被判過期而直接消失 —— 這兩個坑都各害過一次測試。
 
 Android 單元測試:
 

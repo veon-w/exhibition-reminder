@@ -13,12 +13,19 @@ import java.time.temporal.WeekFields
  * 每天同步後對「追蹤中」的展覽全量評估,該發而帳本(NotificationLog)沒記錄的就發。
  * 手機關機錯過的,只要還在規則的有效窗口內就會補發;窗口外不補(避免連環轟炸)。
  * 同一檔展同一天多條日期規則命中,只發最緊急一條;開賣(R3)是事件驅動,獨立發送。
+ *
+ * 兩個閉展門檻會在這裡強制排序(大的 = 第一次提醒,小的 = 第二次)。
+ * 順序顛倒的話第二段的 `(second+1)..first` 會是空區間,第一次提醒會靜默消失;
+ * 設成同一個值也會。使用者的設定畫面不該是唯一防線。
  */
 class ReminderEngine(
-    private val closingFirstDays: Long = 14,
-    private val closingSecondDays: Long = 3,
+    closingFirstDays: Long = 14,
+    closingSecondDays: Long = 3,
     private val saleNoticeDays: Long = 3,
 ) {
+    // max/min 讓「順序」不可能出錯;相等時 max == min,第二段視窗為空(合理退化,不炸)
+    private val closingFirstDays = maxOf(closingFirstDays, closingSecondDays)
+    private val closingSecondDays = minOf(closingFirstDays, closingSecondDays)
 
     data class Candidate(
         val ruleKey: String,
@@ -105,7 +112,9 @@ class ReminderEngine(
                 "今天結束" + (closeHint?.let { ",開放至 $it" } ?: "") + removedHint
             else "只剩 $daysLeft 天(${ex.endDate} 閉展)$removedHint"
             return Candidate(
-                ruleKey = "R2_$closingSecondDays",
+                // ruleKey 刻意「不含」天數:帳本用 (ruleKey, refKey) 去重,把天數寫進來
+                // 會讓使用者每次調整設定就產生一組全新的 key,已發過的提醒會再發一輪。
+                ruleKey = "R2_SECOND",
                 refKey = "${ex.id}:${ex.endDate}",
                 exhibitionId = ex.id,
                 title = "快結束了:${ex.title}",
@@ -128,7 +137,7 @@ class ReminderEngine(
         // R2 第一段:剩 (closingSecondDays, closingFirstDays] 天
         if (daysLeft in (closingSecondDays + 1)..closingFirstDays) {
             return Candidate(
-                ruleKey = "R2_$closingFirstDays",
+                ruleKey = "R2_FIRST",
                 refKey = "${ex.id}:${ex.endDate}",
                 exhibitionId = ex.id,
                 title = "別忘了:${ex.title}",

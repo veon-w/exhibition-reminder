@@ -44,23 +44,42 @@ class ReminderEngineTest {
     }
 
     @Test
-    fun `閉展前14天窗口發 R2_14`() {
+    fun `閉展前14天窗口發 R2_FIRST`() {
         val out = engine.evaluate(monday, listOf(ex(start = "2026-01-01", end = "2026-08-13")), emptyList())
-        assertEquals(listOf("R2_14"), out.map { it.ruleKey })
+        assertEquals(listOf("R2_FIRST"), out.map { it.ruleKey })
         // refKey 帶 endDate,改期後可重發
         assertEquals("moc:x:2026-08-13", out[0].refKey)
     }
 
     @Test
-    fun `剩3天內只發 R2_3 不發 R2_14`() {
+    fun `剩3天內只發 R2_SECOND 不發 R2_FIRST`() {
         val out = engine.evaluate(monday, listOf(ex(start = "2026-01-01", end = "2026-08-04")), emptyList())
-        assertEquals(listOf("R2_3"), out.map { it.ruleKey })
+        assertEquals(listOf("R2_SECOND"), out.map { it.ruleKey })
     }
 
     @Test
-    fun `閉展當天仍發 R2_3_隔天不發`() {
+    fun `天數設反了會自動排序_第一段不會消失`() {
+        // 使用者把「第一次」設成 3、「第二次」設成 14(順序顛倒)。
+        // 以前 (second+1)..first = 15..3 是空區間,第一段提醒會靜默消失。
+        val swapped = ReminderEngine(closingFirstDays = 3, closingSecondDays = 14)
+        val far = swapped.evaluate(monday, listOf(ex(start = "2026-01-01", end = "2026-08-13")), emptyList())
+        assertEquals(listOf("R2_FIRST"), far.map { it.ruleKey })     // 剩 10 天 → 第一段
+        val near = swapped.evaluate(monday, listOf(ex(start = "2026-01-01", end = "2026-08-05")), emptyList())
+        assertEquals(listOf("R2_SECOND"), near.map { it.ruleKey })   // 剩 2 天 → 第二段
+    }
+
+    @Test
+    fun `改天數不會產生新的ruleKey_避免重發`() {
+        // ruleKey 不含天數,所以調整設定後帳本的去重鍵不變
+        val a = ReminderEngine(14, 3).evaluate(monday, listOf(ex(start = "2026-01-01", end = "2026-08-13")), emptyList())
+        val b = ReminderEngine(30, 7).evaluate(monday, listOf(ex(start = "2026-01-01", end = "2026-08-13")), emptyList())
+        assertEquals(a.map { it.ruleKey to it.refKey }, b.map { it.ruleKey to it.refKey })
+    }
+
+    @Test
+    fun `閉展當天仍發 R2_SECOND_隔天不發`() {
         val today = engine.evaluate(monday, listOf(ex(start = "2026-01-01", end = "2026-08-03")), emptyList())
-        assertEquals(listOf("R2_3"), today.map { it.ruleKey })
+        assertEquals(listOf("R2_SECOND"), today.map { it.ruleKey })
         // 當天不寫「剩 0 天」,寫「今天結束」+ 閉館時間
         assertTrue(today[0].message.contains("今天結束"))
         assertTrue(today[0].message.contains("開放至 17:00"))
@@ -70,9 +89,9 @@ class ReminderEngineTest {
 
     @Test
     fun `短展同日命中多規則_只發最緊急`() {
-        // 今天開展、後天閉展:R1 和 R2_3 同時命中 → 只發 R2_3
+        // 今天開展、後天閉展:R1 和 R2_SECOND 同時命中 → 只發 R2_SECOND
         val out = engine.evaluate(monday, listOf(ex(start = "2026-08-03", end = "2026-08-05")), emptyList())
-        assertEquals(listOf("R2_3"), out.map { it.ruleKey })
+        assertEquals(listOf("R2_SECOND"), out.map { it.ruleKey })
     }
 
     @Test
@@ -83,10 +102,10 @@ class ReminderEngineTest {
 
     @Test
     fun `開賣事件獨立於日期規則`() {
-        val e = ex(start = "2026-01-01", end = "2026-08-04") // 同時命中 R2_3
+        val e = ex(start = "2026-01-01", end = "2026-08-04") // 同時命中 R2_SECOND
         val sale = ReminderEngine.SaleEvent(e, "link:udn:abc", "https://t", "同名展")
         val out = engine.evaluate(monday, listOf(e), listOf(sale))
-        assertEquals(setOf("R3", "R2_3"), out.map { it.ruleKey }.toSet())
+        assertEquals(setOf("R3", "R2_SECOND"), out.map { it.ruleKey }.toSet())
         assertEquals("moc:x:link:udn:abc", out.first { it.ruleKey == "R3" }.refKey)
     }
 
@@ -157,7 +176,7 @@ class ReminderEngineTest {
             listOf(ex(start = "2026-01-01", end = "2026-08-04", removedAt = "2026-08-01T08:00:00")),
             emptyList(),
         )
-        assertEquals(listOf("R2_3"), out.map { it.ruleKey })
+        assertEquals(listOf("R2_SECOND"), out.map { it.ruleKey })
         assertTrue(out[0].message.contains("已從來源移除"))
     }
 

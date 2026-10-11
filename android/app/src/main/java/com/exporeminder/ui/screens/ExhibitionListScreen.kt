@@ -5,6 +5,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.LocationManager
+import android.os.Build
+import android.os.CancellationSignal
 import android.provider.CalendarContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -91,6 +93,8 @@ fun ExhibitionListScreen(
     onAcgOnly: (Boolean) -> Unit,
     onDistanceMode: (Boolean) -> Unit,
     onLocation: (Double, Double) -> Unit,
+    onLocationFailed: (String) -> Unit,
+    onDismissLocationNotice: () -> Unit,
     onCloseDetail: () -> Unit,
     batteryExempt: Boolean,
     onRequestBatteryExempt: () -> Unit,
@@ -98,21 +102,74 @@ fun ExhibitionListScreen(
     var localDetail by remember { mutableStateOf<ExhibitionRow?>(null) }
     var cityPanelOpen by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    // 進行中的定位請求,重按或離開畫面時要能取消
+    var locateSignal by remember { mutableStateOf<CancellationSignal?>(null) }
 
+    /**
+     * 主動取一次目前位置。
+     *
+     * 以前只用 getLastKnownLocation():手機沒快取過位置時它回 null,整個功能就靜默失效
+     * ——使用者按了晶片什麼都不會發生、也沒有任何說明。現在改用 getCurrentLocation
+     * (API 30+)主動要一個新的定位;API 26–29 沒有這個方法,退回上次已知位置,
+     * 但真的拿不到時一定要講,不再靜默。
+     */
     fun grabLocation() {
         val lm = context.getSystemService(LocationManager::class.java)
-        val loc = lm.allProviders.firstNotNullOfOrNull {
-            runCatching { lm.getLastKnownLocation(it) }.getOrNull()
+        if (lm == null) {
+            onLocationFailed("這台裝置沒有定位服務,無法排序")
+            return
         }
-        if (loc != null) {
-            onLocation(loc.latitude, loc.longitude)
-            onDistanceMode(true)
+        if (!lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER) &&
+            !lm.isProviderEnabled(LocationManager.GPS_PROVIDER)
+        ) {
+            onLocationFailed("系統定位已關閉,請開啟後再試(設定 → 位置)")
+            return
+        }
+        fun fallbackLastKnown() {
+            val last = lm.allProviders.firstNotNullOfOrNull {
+                runCatching { lm.getLastKnownLocation(it) }.getOrNull()
+            }
+            if (last != null) {
+                onLocation(last.latitude, last.longitude)
+                onDistanceMode(true)
+                // 快取位置可能很久以前;明講是快取,免得使用者以為是剛剛的定位而不解為何排序怪
+                last.time?.let { onLocationFailed("目前定位收不到訊號,暫用上次已知位置排序") }
+            } else {
+                onLocationFailed("暫時拿不到位置,請確認已允許定位後再試一次")
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            locateSignal?.cancel()
+            val signal = CancellationSignal()
+            locateSignal = signal
+            runCatching {
+                lm.getCurrentLocation(
+                    LocationManager.NETWORK_PROVIDER, signal,
+                    context.mainExecutor,
+                ) { loc ->
+                    locateSignal = null
+                    if (loc != null) {
+                        onLocation(loc.latitude, loc.longitude)
+                        onDistanceMode(true)
+                    } else {
+                        fallbackLastKnown()   // 主動取失敗,至少用上次已知位置
+                    }
+                }
+            }.onFailure {
+                locateSignal = null
+                fallbackLastKnown()
+            }
+        } else {
+            fallbackLastKnown()
         }
     }
 
     val locPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { granted -> if (granted) grabLocation() }
+    ) { granted ->
+        if (granted) grabLocation()
+        else onLocationFailed("沒有定位權限,無法依距離排序(可到系統設定開啟)")
+    }
 
     Column(modifier.fillMaxSize()) {
         if (!batteryExempt) {
@@ -132,6 +189,18 @@ fun ExhibitionListScreen(
                 color = MaterialTheme.colorScheme.error,
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            )
+        }
+        // 「離我近」失敗或目前用了上次快取位置時的說明;點一下可關掉
+        state.locationNotice?.let { notice ->
+            Text(
+                text = notice,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onDismissLocationNotice)
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
             )
         }
         TabRow(selectedTabIndex = if (state.tab == UiTab.ALL) 0 else 1) {
@@ -183,12 +252,16 @@ fun ExhibitionListScreen(
             FilterChip(
                 selected = state.distanceMode,
                 onClick = {
-                    if (state.distanceMode) onDistanceMode(false)
-                    else if (ContextCompat.checkSelfPermission(
+                    if (state.distanceMode) {
+                        onDistanceMode(false)
+                    } else if (ContextCompat.checkSelfPermission(
                             context, Manifest.permission.ACCESS_COARSE_LOCATION
                         ) == PackageManager.PERMISSION_GRANTED
-                    ) grabLocation()
-                    else locPermission.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
+                    ) {
+                        grabLocation()
+                    } else {
+                        locPermission.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
+                    }
                 },
                 label = { Text("離我近") },
             )

@@ -69,4 +69,6 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.coil.compose)
     testImplementation(libs.junit)
+    // android.jar 的 org.json 在單元測試裡只是沒有實作的 stub,要真的能解析得靠這個
+    testImplementation("org.json:json:20240303")
 }

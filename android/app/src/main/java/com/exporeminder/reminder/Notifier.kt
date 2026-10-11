@@ -35,10 +35,15 @@ class Notifier(private val context: Context) {
         }
     }
 
-    fun show(c: ReminderEngine.Candidate) {
+    /**
+     * 顯示提醒。回傳「是否真的送出」——呼叫端要靠這個決定要不要寫入已發送帳本。
+     * 通知權限被拒時這裡會 early return,此時**不能**記帳;否則那則提醒會被永久吃掉,
+     * 使用者之後補授權也再也不會收到。
+     */
+    fun show(c: ReminderEngine.Candidate): Boolean {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
             != PackageManager.PERMISSION_GRANTED
-        ) return
+        ) return false
 
         val channel = if (c.ruleKey == "R4") CHANNEL_DIGEST else CHANNEL_REMINDERS
         val intent = Intent(context, MainActivity::class.java).apply {
@@ -59,5 +64,6 @@ class Notifier(private val context: Context) {
             .build()
         NotificationManagerCompat.from(context)
             .notify((c.ruleKey + c.refKey).hashCode(), notif)
+        return true
     }
 }

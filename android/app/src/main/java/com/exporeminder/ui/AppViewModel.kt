@@ -133,13 +133,17 @@ data class UiState(
     val detailRow: ExhibitionRow? = null,   // 通知點進來要開的詳情
     val settings: SettingsStore.Settings? = null,
     val dataStale: Boolean = false,
+    val locationNotice: String? = null,     // 「離我近」失敗或使用快取位置時的說明
 )
 
 private data class Filters(
     val tab: Tab, val query: String, val kind: Kind, val cities: Set<String>,
     val freeOnly: Boolean, val acgOnly: Boolean, val distanceMode: Boolean,
     val location: Pair<Double, Double>?, val detailId: String?,
+    val locationNotice: String?,
 )
+
+private data class LocState(val coords: Pair<Double, Double>?, val notice: String?)
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val db = AppDatabase.get(app)
@@ -154,6 +158,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val distanceMode = MutableStateFlow(false)
     private val location = MutableStateFlow<Pair<Double, Double>?>(null)
     private val detailId = MutableStateFlow<String?>(null)
+    private val locationNotice = MutableStateFlow<String?>(null)
 
     init {
         // 有內建網址時,第一次開啟就先抓一次,不用等 24h 週期任務或使用者自己按「立即同步」
@@ -163,13 +168,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // 位置與其說明綁在一起:兩者永遠一起出現/消失,分開合併會超出 combine 的參數上限
+    private val locState = combine(location, locationNotice) { loc, notice -> LocState(loc, notice) }
+
     private val filters = combine(
         combine(tab, query, kind, cities, freeOnly) { t, q, k, c, f ->
-            Filters(t, q, k, c, f, false, false, null, null)
+            Filters(t, q, k, c, f, false, false, null, null, null)
         },
-        distanceMode, location, detailId, acgOnly,
+        distanceMode, locState, detailId, acgOnly,
     ) { base, dm, loc, did, acg ->
-        base.copy(distanceMode = dm, location = loc, detailId = did, acgOnly = acg)
+        base.copy(
+            distanceMode = dm, location = loc.coords, detailId = did, acgOnly = acg,
+            locationNotice = loc.notice,
+        )
     }
 
     val state = combine(
@@ -269,6 +280,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         UiState(
             rows, f.tab, f.query, f.kind, kindPrefs, f.cities, cityOptions,
             f.freeOnly, f.acgOnly, f.distanceMode, f.location != null, detailRow, cfg, stale,
+            f.locationNotice,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UiState())
 
@@ -277,10 +289,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun setKind(k: Kind) { kind.value = k }
     fun setFreeOnly(v: Boolean) { freeOnly.value = v }
     fun setAcgOnly(v: Boolean) { acgOnly.value = v }
-    fun setDistanceMode(v: Boolean) { distanceMode.value = v }
-    fun setLocation(lat: Double, lng: Double) { location.value = lat to lng }
+    fun setDistanceMode(v: Boolean) {
+        distanceMode.value = v
+        if (!v) locationNotice.value = null   // 關掉就把說明一起收掉
+    }
 
+    fun setLocation(lat: Double, lng: Double) {
+        location.value = lat to lng
+        locationNotice.value = null
+    }
+
+    /**
+     * 「離我近」的說明文字,直接顯示給使用者(以前取不到位置是**完全靜默**)。
+     * 兩種情況:真的失敗(沒有座標,排序要關掉),或只是改用快取位置(排序照用,只提示)。
+     */
+    fun setLocationUnavailable(reason: String) {
+        locationNotice.value = reason
+        if (location.value == null) distanceMode.value = false   // 沒座標就不該假裝排好序了
+    }
+
+    fun dismissLocationNotice() { locationNotice.value = null }
+
+    /** 開詳情。設定頁還開著時由呼叫端負責先切回清單,否則詳情會設定在沒被渲染的畫面上。 */
     fun openDetail(id: String) { detailId.value = id }
+
     fun closeDetail() { detailId.value = null }
 
     fun toggleCity(city: String) {
@@ -339,27 +371,68 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         onDone(result)
     }
 
-    /** 匯入追蹤清單。回傳匯入筆數,-1 = 失敗。 */
-    fun importFollows(uri: Uri, onDone: (Int) -> Unit) = viewModelScope.launch {
+    /**
+     * 匯入追蹤清單。
+     *
+     * 先把整個檔案解析完、驗證完,才一次寫進資料庫 —— 以前是一邊解析一邊寫,
+     * 檔案中間有一筆壞掉就會留下「前面已經寫進去、後面沒寫」的半套結果,
+     * 使用者卻只看到「匯入失敗」。
+     *
+     * matchedUnavailable 是目前資料庫裡還沒有、要等同步才看得到的筆數(不是錯誤,
+     * 只是要告訴使用者為什麼追蹤頁可能還是空的)。
+     */
+    data class ImportResult(
+        val total: Int,
+        val added: Int,
+        val matched: Int,
+        val matchedUnavailable: Int,
+    )
+
+    fun importFollows(uri: Uri, onDone: (ImportResult?) -> Unit) = viewModelScope.launch {
         val result = runCatching {
             val text = getApplication<Application>().contentResolver
                 .openInputStream(uri)!!.use { it.readBytes().decodeToString() }
-            val arr = JSONObject(text).getJSONArray("follows")
-            var n = 0
-            for (i in 0 until arr.length()) {
-                val o = arr.getJSONObject(i)
-                db.followDao().add(FollowEntity(
-                    exhibitionId = o.getString("id"),
-                    followedAt = o.optString("followedAt",
-                        LocalDate.now(SyncRepository.TAIPEI).toString()),
-                    muted = o.optBoolean("muted", false),
-                ))
-                n++
-            }
-            n
-        }.getOrDefault(-1)
+            // 1) 先全部解析完,才寫資料庫 —— 檔案中間有壞掉的一筆不會留下半套結果
+            val parsed = parseFollowsFile(text, LocalDate.now(SyncRepository.TAIPEI).toString())
+
+            // 2) 一次寫入(Room 的 @Insert(List) 是單一交易)
+            db.followDao().addAll(parsed)
+            val known = db.exhibitionDao().all().mapTo(HashSet()) { it.id }
+            val matched = parsed.count { it.exhibitionId in known }
+            ImportResult(
+                total = parsed.size,
+                added = parsed.size,
+                matched = matched,
+                matchedUnavailable = parsed.size - matched,
+            )
+        }.getOrNull()
         onDone(result)
     }
+}
+
+/**
+ * 解析匯入檔成追蹤清單(抽出來是為了能單獨測試)。
+ *
+ * 以前是一邊解析一邊逐筆寫入,中途遇到壞掉的一筆會丟例外,結果是「前面幾筆已經寫進去、
+ * 卻顯示匯入失敗」的半套狀態。現在先把整份解析完,失敗就整批不寫。
+ * 沒有 id 的項目直接跳過(單筆壞掉不該讓整個檔案失敗),同一檔內重複的只留一筆。
+ */
+internal fun parseFollowsFile(text: String, defaultFollowedAt: String): List<FollowEntity> {
+    val arr = JSONObject(text).getJSONArray("follows")
+    val out = ArrayList<FollowEntity>(arr.length())
+    val seen = HashSet<String>(arr.length())
+    for (i in 0 until arr.length()) {
+        val o = arr.optJSONObject(i) ?: continue
+        val id = o.optString("id")
+        if (id.isBlank()) continue
+        if (!seen.add(id)) continue
+        out += FollowEntity(
+            exhibitionId = id,
+            followedAt = o.optString("followedAt", defaultFollowedAt),
+            muted = o.optBoolean("muted", false),
+        )
+    }
+    return out
 }
 
 private fun haversineKm(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Double {

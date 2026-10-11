@@ -144,8 +144,10 @@ class SyncRepository(private val context: Context) {
 
         for (c in engine.evaluate(today, followed, saleEvents)) {
             if (logDao.count(c.ruleKey, c.refKey) > 0) continue
-            notifier.show(c)
-            logDao.insert(NotificationLogEntity(c.ruleKey, c.refKey, today.toString()))
+            // 只有真的送出才記帳。權限被拒時 show() 回 false,不記帳 → 補授權後還會補發。
+            if (notifier.show(c)) {
+                logDao.insert(NotificationLogEntity(c.ruleKey, c.refKey, today.toString()))
+            }
         }
     }
 }

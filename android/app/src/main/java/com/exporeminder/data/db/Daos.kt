@@ -48,6 +48,10 @@ interface FollowDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun add(f: FollowEntity)
 
+    /** 匯入用:整批寫入。Room 會把它包在單一交易,中途失敗不會留下半套資料。 */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun addAll(items: List<FollowEntity>)
+
     @Query("DELETE FROM follow WHERE exhibitionId = :id")
     suspend fun remove(id: String)
 

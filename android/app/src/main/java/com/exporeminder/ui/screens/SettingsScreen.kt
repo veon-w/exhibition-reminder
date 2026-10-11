@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
+import com.exporeminder.ui.AppViewModel
 import com.exporeminder.ui.Kind
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -46,8 +47,10 @@ fun SettingsScreen(
     onKindPrefs: (List<Pair<Kind, Boolean>>) -> Unit,
     batteryExempt: Boolean,
     onRequestBatteryExempt: () -> Unit,
+    exactAlarmAllowed: Boolean,
+    onRequestExactAlarm: () -> Unit,
     onExport: (Uri, (Int) -> Unit) -> Unit,
-    onImport: (Uri, (Int) -> Unit) -> Unit,
+    onImport: (Uri, (AppViewModel.ImportResult?) -> Unit) -> Unit,
 ) {
     val context = LocalContext.current
     fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
@@ -59,7 +62,20 @@ fun SettingsScreen(
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
-        uri?.let { onImport(it) { n -> toast(if (n >= 0) "已匯入 $n 筆追蹤" else "匯入失敗(檔案格式不對?)") } }
+        uri?.let {
+            onImport(it) { r ->
+                toast(
+                    when {
+                        r == null -> "匯入失敗(檔案格式不對?)"
+                        r.total == 0 -> "檔案裡沒有追蹤項目"
+                        // 對不上任何展覽的筆數要講清楚,否則使用者會以為匯入壞了
+                        r.matchedUnavailable > 0 ->
+                            "已匯入 ${r.added} 筆,其中 ${r.matchedUnavailable} 筆要等同步後才會出現"
+                        else -> "已匯入 ${r.added} 筆追蹤"
+                    }
+                )
+            }
+        }
     }
     val cfg = state.settings
     var url by remember { mutableStateOf("") }
@@ -115,18 +131,43 @@ fun SettingsScreen(
                 Text("⚠ 允許背景運作(否則省電機制可能擋掉提醒)")
             }
         }
+        // Android 12/12L 的精確鬧鐘預設關閉。沒開的話提醒仍會發,但時間會漂。
+        if (!exactAlarmAllowed) {
+            Text(
+                "⚠ 系統未允許「鬧鐘與提醒」,每日同步時間可能不準(會晚幾分鐘到幾小時)",
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+            )
+            OutlinedButton(onClick = onRequestExactAlarm) {
+                Text("開啟鬧鐘與提醒權限")
+            }
+        }
 
         Text("閉展前提醒", style = MaterialTheme.typography.titleMedium)
+        // 第一次必須比第二次早(天數較多)。填反的話第二段視窗會是空的,第一次提醒會
+        // 靜默消失 —— 引擎端也會自動排序,這裡先擋一次並告訴使用者發生了什麼。
+        val firstPicked = first.toIntOrNull() ?: 14
+        val secondPicked = second.toIntOrNull() ?: 3
+        val orderSwapped = firstPicked < secondPicked
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(
                 value = first, onValueChange = { first = it.filter(Char::isDigit) },
                 label = { Text("第一次(天)") }, modifier = Modifier.weight(1f),
+                isError = orderSwapped,
             )
             OutlinedTextField(
                 value = second, onValueChange = { second = it.filter(Char::isDigit) },
                 label = { Text("第二次(天)") }, modifier = Modifier.weight(1f),
+                isError = orderSwapped,
             )
         }
+        Text(
+            if (orderSwapped) "⚠ 第一次的天數要比第二次多(例如 14 / 3),儲存時會自動交換"
+            else "第一次的天數要比第二次多(例如 14 / 3)",
+            style = MaterialTheme.typography.bodySmall,
+            color = if (orderSwapped) MaterialTheme.colorScheme.error
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
 
         Text("類別顯示與順序", style = MaterialTheme.typography.titleMedium)
         Text("關掉的類別不會出現在清單(已追蹤的不受影響)",
@@ -170,8 +211,11 @@ fun SettingsScreen(
 
         Button(
             onClick = {
-                onSave(url, first.toIntOrNull() ?: 14, second.toIntOrNull() ?: 3,
-                    saleDays.toIntOrNull() ?: 3)
+                // 空字串或 0 會讓提醒永遠不發,所以下限夾在 1;順序顛倒就交換。
+                val f = (first.toIntOrNull() ?: 14).coerceIn(1, 365)
+                val s = (second.toIntOrNull() ?: 3).coerceIn(1, 365)
+                onSave(url, maxOf(f, s), minOf(f, s),
+                    (saleDays.toIntOrNull() ?: 3).coerceIn(0, 365))
             },
             enabled = url.isNotBlank(),
         ) { Text("儲存") }

@@ -44,6 +44,10 @@ data class FollowEntity(
  * 已發送提醒的帳本,防重複 + 判斷補發。
  * refKey 規則:R1/R3=展覽id(R3 另帶事件簽名)、R2=「id:當時endDate」(改期自動產生新 key 可重發)、
  * R4=ISO 週(如 2026-W32)。
+ *
+ * ruleKey 務必「與使用者設定值無關」:去重鍵是 (ruleKey, refKey),把天數之類的設定塞進
+ * ruleKey 會讓每次調整設定都產生一組全新的鍵,已發過的提醒會再發一輪。
+ * 因此 R2 用的是固定的 R2_FIRST / R2_SECOND,不含天數。
  */
 @Entity(tableName = "notification_log", primaryKeys = ["ruleKey", "refKey"])
 data class NotificationLogEntity(
