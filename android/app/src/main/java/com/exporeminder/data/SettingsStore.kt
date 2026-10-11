@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.exporeminder.BuildConfig
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -16,9 +17,11 @@ private val Context.dataStore by preferencesDataStore(name = "settings")
  * 留空則維持原行為:第一次開啟強制停在設定頁要求貼網址。
  * 這只是預設值 —— 使用者在設定頁存過自己的網址就以他的為準。
  *
- * 格式:https://raw.githubusercontent.com/<帳號>/<repo>/main/data/exhibitions.json
+ * 值來自 Gradle 的 expoJsonUrl 屬性(見 app/build.gradle.kts),部署時用
+ * `-PexpoJsonUrl=...` 指定即可,不必改這一行:
+ * https://raw.githubusercontent.com/<帳號>/<repo>/main/data/exhibitions.json
  */
-const val DEFAULT_JSON_URL = ""
+val DEFAULT_JSON_URL: String = BuildConfig.DEFAULT_JSON_URL
 
 class SettingsStore(private val context: Context) {
 

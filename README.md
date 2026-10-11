@@ -28,6 +28,10 @@
 關鍵字在 `AppViewModel.kt` 的 `ACG_KEYWORDS`,規則與誤判案例見 `AcgFilterTest.kt`
 (「玩具」單獨當關鍵字會掃進軍事玩具槍展和婦幼展,只收複合詞;描述欄不比對)。
 
+清單頁的篩選晶片順序是:`全部` → `漫展/ACG` → `同人展` → `藝文` → `特展` → `商展` → `演唱會`
+→ 地區/免費/離我近。前兩個是刻意排前面的(最常用),`Kind.ORDER` 的預設順序也以同人展為首;
+使用者在設定頁仍可自行調整類別順序,存過就以他的為準。
+
 同人場的展名很多不含 ACG 字眼(CWT 只有場次代號),所以判定改看來源,不靠關鍵字。
 仍抓不到的:各百貨/咖啡廳的期間限定聯名、快閃店,以及拓元/KKTIX 售票的大型演唱會。
 
@@ -75,15 +79,25 @@ https://raw.githubusercontent.com/<你的帳號>/<repo名>/main/data/exhibitions
 
 ### 4. (建議)把資料網址內建進 app
 
-把步驟 3 的網址填進 `android/app/src/main/java/com/exporeminder/data/SettingsStore.kt`
-最上面的 `DEFAULT_JSON_URL`:
+建置時用 Gradle 屬性帶入即可,**不需要改任何程式碼**:
 
-```kotlin
-const val DEFAULT_JSON_URL = "https://raw.githubusercontent.com/<帳號>/<repo>/main/data/exhibitions.json"
+```powershell
+cd android
+.\gradlew.bat assembleRelease -PexpoJsonUrl=https://raw.githubusercontent.com/<帳號>/<repo>/main/data/exhibitions.json
 ```
 
-填了之後 app 一裝好開啟就自動同步、直接看到展覽,不必手動貼網址 —— 要把 APK 傳給朋友時特別有差。
-留空則維持原行為:第一次開啟強制停在設定頁要求貼網址。使用者若在設定頁存過自己的網址,以他存的為準。
+```bash
+cd android
+./gradlew assembleRelease -PexpoJsonUrl=https://raw.githubusercontent.com/<帳號>/<repo>/main/data/exhibitions.json
+```
+
+沒帶 `-PexpoJsonUrl` 時預設是空字串。填了之後 app 一裝好開啟就自動同步、直接看到展覽,
+不必手動貼網址 —— 要把 APK 傳給朋友時特別有差。留空則維持原行為:第一次開啟強制停在
+設定頁要求貼網址。使用者若在設定頁存過自己的網址,以他存的為準。
+
+這個值會被寫進 `BuildConfig.DEFAULT_JSON_URL`(`app/build.gradle.kts` 的 `expoJsonUrl`),
+所以本機測試也可以指向自己的資料源,例如
+`-PexpoJsonUrl=http://127.0.0.1:8765/exhibitions.json`。
 
 ### 5. 安裝 Android app
 

@@ -230,12 +230,16 @@ fun ExhibitionListScreen(
                     onClick = { onKind(k) },
                     label = { Text(k.label) },
                 )
+                // 「漫展/ACG」是跨來源的內容篩選、不屬於 Kind 清單,但排在最前面比較常用,
+                // 所以固定在「全部」後面;同人展(DOUJIN)則排在類別順序的第一位。
+                if (k == Kind.ALL) {
+                    FilterChip(
+                        selected = state.acgOnly,
+                        onClick = { onAcgOnly(!state.acgOnly) },
+                        label = { Text("漫展/ACG") },
+                    )
+                }
             }
-            FilterChip(
-                selected = state.acgOnly,
-                onClick = { onAcgOnly(!state.acgOnly) },
-                label = { Text("漫展/ACG") },
-            )
             FilterChip(
                 selected = state.selectedCities.isNotEmpty(),
                 onClick = { cityPanelOpen = !cityPanelOpen },

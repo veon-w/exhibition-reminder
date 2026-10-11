@@ -49,8 +49,12 @@ enum class Kind(val label: String) {
     }
 
     companion object {
-        /** 預設顯示順序;新增類別要一起加進來,parsePrefs 會靠它補上舊設定沒有的類別。 */
-        val ORDER: List<Kind> = listOf(ART, EXPO, TRADE, DOUJIN, CONCERT)
+        /**
+         * 預設顯示順序;新增類別要一起加進來,parsePrefs 會靠它補上舊設定沒有的類別。
+         * 同人展排第一(使用者指定):它是最常用來找場次的類別。
+         * 注意這是「預設」順序 —— 使用者若在設定頁調過順序,以他存的為準。
+         */
+        val ORDER: List<Kind> = listOf(DOUJIN, ART, EXPO, TRADE, CONCERT)
 
         val DEFAULT_PREFS: List<Pair<Kind, Boolean>> = ORDER.map { it to true }
 

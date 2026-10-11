@@ -14,6 +14,13 @@ val keystoreProps = Properties().apply {
     if (f.exists()) f.inputStream().use { load(it) }
 }
 
+// 內建資料網址。預設空字串 = 首次開啟強制停在設定頁要使用者貼網址。
+// 部署時填在這裡(或 -PexpoJsonUrl=... 覆寫):
+//   .\gradlew.bat assembleRelease -PexpoJsonUrl=https://raw.githubusercontent.com/<帳號>/<repo>/main/data/exhibitions.json
+// 放成建置期常數而不是寫死在 SettingsStore.kt,是為了讓本機測試用 localhost、
+// 正式版用 GitHub 而不必改任何程式碼。
+val expoJsonUrl: String = (findProperty("expoJsonUrl") as String?) ?: ""
+
 android {
     namespace = "com.exporeminder"
     compileSdk = 36
@@ -24,6 +31,7 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
+        buildConfigField("String", "DEFAULT_JSON_URL", "\"$expoJsonUrl\"")
     }
 
     signingConfigs {
@@ -48,7 +56,11 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
-    buildFeatures { compose = true }
+    // buildConfig 是為了 BuildConfig.DEFAULT_JSON_URL(buildConfigField)
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
 }
 
 dependencies {
