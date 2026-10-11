@@ -1,0 +1,36 @@
+# 每日自動抓展覽資料,commit 回 repo 的 data/exhibitions.json
+# 台北時間每天早上 08:00(UTC 00:00)。也可到 Actions 頁面手動觸發(workflow_dispatch)。
+name: scrape-exhibitions
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r scraper/requirements.txt
+
+      - name: Run scraper
+        working-directory: scraper
+        run: python scrape.py --out ../data/exhibitions.json
+
+      - name: Commit if changed
+        run: |
+          git config user.name "expo-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/exhibitions.json
+          git diff --cached --quiet || git commit -m "data: $(date +%F) 自動更新展覽資料"
+          git push

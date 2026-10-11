@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+*.apk
+!android/app/release/*.apk
+
+# 簽名金鑰(絕不進版控)
+android/keystore/
+android/keystore.properties

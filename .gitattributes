@@ -1,0 +1,14 @@
+# 換行符一律 LF 存進版控。gradlew 是 sh 腳本,被存成 CRLF 的話
+# GitHub Actions(ubuntu)會報 "bad interpreter: No such file or directory"。
+* text=auto eol=lf
+
+# Windows 批次檔一定要 CRLF,否則 cmd.exe 解析會出錯
+*.bat text eol=crlf
+
+# 二進位檔不要做任何換行轉換
+*.jar   binary
+*.jks   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.apk   binary
