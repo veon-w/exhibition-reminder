@@ -1,0 +1,29 @@
+#!/bin/sh
+# 防止 commit 被署名成已棄用的 email。
+#
+# 這個 repo 要用的身分是:
+#   Veon <veonwang@outlook.com>
+# veonwang@gmail.com 已棄用,不該再出現在新的 commit 上。
+#
+# 實際發生過:Android Studio 用它自己記住的身分覆寫了 .git/config,
+# 導致 commit 署名錯誤。這裡在 commit 前擋下來,寧可失敗也不要默默用錯身分。
+#
+# core.hooksPath 是本機設定(不進版控),新環境要跑一次:
+#   git config --local core.hooksPath .githooks
+
+current=$(git config user.email)
+
+case "$current" in
+  *veonwang@gmail.com)
+    echo "" >&2
+    echo "✗ 拒絕 commit:user.email 是已棄用的「$current」。" >&2
+    echo "  請改成正確的個人身分:" >&2
+    echo "    git config --local user.name  \"Veon\"" >&2
+    echo "    git config --local user.email \"veonwang@outlook.com\"" >&2
+    echo "  (很可能又是 Android Studio 覆寫了 .git/config)" >&2
+    echo "" >&2
+    exit 1
+    ;;
+esac
+
+exit 0
