@@ -131,6 +131,7 @@ class MainActivity : ComponentActivity() {
                             onLocation = vm::setLocation,
                             onLocationFailed = vm::setLocationUnavailable,
                             onDismissLocationNotice = vm::dismissLocationNotice,
+                            onClearFilters = vm::clearFilters,
                             onCloseDetail = vm::closeDetail,
                             batteryExempt = batteryExempt.value,
                             onRequestBatteryExempt = ::requestBatteryExemption,

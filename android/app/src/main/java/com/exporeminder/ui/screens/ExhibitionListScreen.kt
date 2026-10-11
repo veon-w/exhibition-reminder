@@ -15,6 +15,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -30,9 +32,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -54,6 +58,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
@@ -95,6 +100,7 @@ fun ExhibitionListScreen(
     onLocation: (Double, Double) -> Unit,
     onLocationFailed: (String) -> Unit,
     onDismissLocationNotice: () -> Unit,
+    onClearFilters: () -> Unit,
     onCloseDetail: () -> Unit,
     batteryExempt: Boolean,
     onRequestBatteryExempt: () -> Unit,
@@ -218,28 +224,59 @@ fun ExhibitionListScreen(
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 8.dp),
         )
+        // 「類別」是單選,和下面的地區/免費/離我近(各自獨立開關)分開兩列,
+        // 免得三種不同行為的晶片混在一起讓人分不出是單選還是多選。
         Row(
             Modifier
                 .horizontalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
+            Text(
+                "類別",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             (listOf(Kind.ALL) + state.kindPrefs.filter { it.second }.map { it.first }).forEach { k ->
                 FilterChip(
                     selected = state.kind == k,
                     onClick = { onKind(k) },
                     label = { Text(k.label) },
                 )
-                // 「漫展/ACG」是跨來源的內容篩選、不屬於 Kind 清單,但排在最前面比較常用,
-                // 所以固定在「全部」後面;同人展(DOUJIN)則排在類別順序的第一位。
+                // 「漫展/ACG」是跨來源的內容篩選,可以跟上面的類別疊加,不是類別之一。
+                // 所以做成勾選樣式(前面帶勾號、選取時不填色),跟單選的類別晶片明顯不同;
+                // 如果做成一樣的填色晶片,使用者會以為切到別的類別就該把它取消掉。
                 if (k == Kind.ALL) {
                     FilterChip(
                         selected = state.acgOnly,
                         onClick = { onAcgOnly(!state.acgOnly) },
                         label = { Text("漫展/ACG") },
+                        leadingIcon = {
+                            if (state.acgOnly) {
+                                Icon(
+                                    Icons.Filled.Check,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            }
+                        },
                     )
                 }
             }
+        }
+        Row(
+            Modifier
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "篩選",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             FilterChip(
                 selected = state.selectedCities.isNotEmpty(),
                 onClick = { cityPanelOpen = !cityPanelOpen },
@@ -291,13 +328,49 @@ fun ExhibitionListScreen(
                 }
             }
         }
-        LazyColumn(
-            Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
-        ) {
-            items(state.rows, key = { it.ex.id }) { row ->
-                ExhibitionCard(row, onToggleFollow) { localDetail = row }
+        // 0 筆時給明確說明。以前這裡只有一片空白,使用者會以為 App 壞了
+        // (尤其「漫展/ACG」在沒有活動的期間一定會是空的)。
+        if (state.rows.isEmpty()) {
+            val tabName = if (state.tab == UiTab.ALL) "全部" else "追蹤中"
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(32.dp),
+                ) {
+                    Text(
+                        if (state.filtersActive) "沒有符合條件的展覽" else "這裡還沒有展覽",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        when {
+                            state.filtersActive ->
+                                "目前的「$tabName」分頁搭配篩選條件找不到結果。\n" +
+                                    "可能是「漫展/ACG」這段期間沒有活動,或地區設得太窄。"
+                            state.tab == UiTab.FOLLOWED ->
+                                "你還沒有追蹤任何展覽。\n到「全部」分頁按卡片右邊的 ★ 就會出現在這裡。"
+                            else ->
+                                "可能是資料還沒同步。到設定頁按「立即同步」試試。"
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                    )
+                    if (state.filtersActive) {
+                        Spacer(Modifier.height(16.dp))
+                        Button(onClick = onClearFilters) { Text("清除所有篩選") }
+                    }
+                }
+            }
+        } else {
+            LazyColumn(
+                Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+            ) {
+                items(state.rows, key = { it.ex.id }) { row ->
+                    ExhibitionCard(row, onToggleFollow) { localDetail = row }
+                }
             }
         }
     }

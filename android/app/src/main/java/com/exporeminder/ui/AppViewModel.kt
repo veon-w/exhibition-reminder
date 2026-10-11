@@ -138,6 +138,8 @@ data class UiState(
     val settings: SettingsStore.Settings? = null,
     val dataStale: Boolean = false,
     val locationNotice: String? = null,     // 「離我近」失敗或使用快取位置時的說明
+    // 有任何篩選/搜尋生效中。清單為空時用來區分「篩選到沒有」和「根本還沒資料」。
+    val filtersActive: Boolean = false,
 )
 
 private data class Filters(
@@ -281,10 +283,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
         val detailRow = f.detailId?.let { byId[it] }?.let(::toRow)
 
+        // 「追蹤中」分頁本身不算篩選 —— 沒有追蹤任何展時要顯示的是「去追蹤」而不是「清除篩選」
+        val filtersActive = f.query.isNotEmpty() || f.kind != Kind.ALL ||
+            f.cities.isNotEmpty() || f.freeOnly || f.acgOnly || f.distanceMode
+
         UiState(
             rows, f.tab, f.query, f.kind, kindPrefs, f.cities, cityOptions,
             f.freeOnly, f.acgOnly, f.distanceMode, f.location != null, detailRow, cfg, stale,
-            f.locationNotice,
+            f.locationNotice, filtersActive,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UiState())
 
@@ -313,6 +319,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun dismissLocationNotice() { locationNotice.value = null }
+
+    /**
+     * 一次清掉所有篩選與搜尋(清單 0 筆時的一鍵救援)。
+     * 「追蹤中」分頁不動 —— 那是使用者當下的位置,不是篩選條件。
+     */
+    fun clearFilters() {
+        query.value = ""
+        kind.value = Kind.ALL
+        cities.value = emptySet()
+        freeOnly.value = false
+        acgOnly.value = false
+        distanceMode.value = false
+        locationNotice.value = null
+    }
 
     /** 開詳情。設定頁還開著時由呼叫端負責先切回清單,否則詳情會設定在沒被渲染的畫面上。 */
     fun openDetail(id: String) { detailId.value = id }

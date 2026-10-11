@@ -29,8 +29,8 @@ android {
         applicationId = "com.exporeminder"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
         buildConfigField("String", "DEFAULT_JSON_URL", "\"$expoJsonUrl\"")
     }
 
