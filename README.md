@@ -245,6 +245,9 @@ app 會在設定頁顯示提示與「開啟鬧鐘與提醒權限」按鈕(API 33
 
 ## 開發
 
+> **要出更新版(改功能後重新打包 APK)看 [RELEASE.md](RELEASE.md)**,那裡有完整流程與地雷清單。
+> 一鍵版本:`.\release.ps1`(自動遞增版號、建置、驗簽章、安裝、推送)。
+
 scraper 跨平台,Windows / Linux / macOS 指令相同(Windows 若 `python` 指到 Store 版
 可改用 `py -3`):
 
