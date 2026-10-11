@@ -1,5 +1,6 @@
 """fixture 全部來自真實網站回應(三源為 2026-08-05,ff/cwt 為 2026-08-15)。"""
 import json
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -13,7 +14,7 @@ from expo_scraper.sources.moc import _parse_one
 from expo_scraper.sources.twtc import _parse_rows
 from expo_scraper.sources.udn import QINFO_RE, _parse_cards, _parse_sale_dt
 from expo_scraper.util import (extract_city, guess_city, parse_md_period,
-                               title_similarity)
+                               title_similarity, today_taipei)
 
 FIX = Path(__file__).parent / "fixtures"
 
@@ -173,32 +174,124 @@ def _twtc(id_, title, start, end):
                       startDate=start, endDate=end)
 
 
+# reconcile 內部用 today_taipei() 讀系統日期來決定保留期,所以測試的檔期必須
+# 相對「今天」而不是寫死常數 —— 寫死的話日子一過就會被 KEEP_ENDED_DAYS 濾掉,
+# 測試會在某天無聲地開始失敗(2026-10 就發生過一次)。
+_TODAY = today_taipei()
+
+
+def _day(offset):
+    return (_TODAY + timedelta(days=offset)).isoformat()
+
+
+# now_iso 也必須是「現在」。removedAt 會被當成移除時間再加 KEEP_REMOVED_DAYS 天保留,
+# 傳一個過去的時間戳會讓項目一進來就被判定過期而直接消失。
+_NOW_ISO = f"{_TODAY.isoformat()}T08:00:00+08:00"
+
+
 def test_reconcile_rename_keeps_old_id():
     """展名微調 → hash 變 → 必須沿用舊 id,訂閱才不會丟。"""
-    prev = [_twtc("twtc:aaa", "2026台北國際旅展", "2026-11-06", "2026-11-09").to_dict()]
-    fresh = [_twtc("twtc:bbb", "2026 台北國際旅展 ITF", "2026-11-07", "2026-11-10")]
-    out = reconcile(fresh, prev, {"twtc"}, "2026-08-05T08:00:00+08:00")
+    prev = [_twtc("twtc:aaa", "2026台北國際旅展", _day(30), _day(33)).to_dict()]
+    fresh = [_twtc("twtc:bbb", "2026 台北國際旅展 ITF", _day(31), _day(34))]
+    out = reconcile(fresh, prev, {"twtc"}, _NOW_ISO)
     assert len(out) == 1 and out[0].id == "twtc:aaa"
     assert out[0].title == "2026 台北國際旅展 ITF"  # 資料用新的,id 用舊的
 
 
 def test_reconcile_removed_marked_not_deleted():
-    prev = [_twtc("twtc:aaa", "某展", "2026-09-01", "2026-09-05").to_dict()]
-    out = reconcile([], prev, {"twtc"}, "2026-08-05T08:00:00+08:00")
+    prev = [_twtc("twtc:aaa", "某展", _day(20), _day(25)).to_dict()]
+    out = reconcile([], prev, {"twtc"}, _NOW_ISO)
     assert len(out) == 1 and out[0].removedAt is not None
 
 
 def test_reconcile_failed_source_untouched():
     """該源本次抓失敗 → 不做移除判定,原樣沿用。"""
-    prev = [_twtc("twtc:aaa", "某展", "2026-09-01", "2026-09-05").to_dict()]
-    out = reconcile([], prev, set(), "2026-08-05T08:00:00+08:00")
+    prev = [_twtc("twtc:aaa", "某展", _day(20), _day(25)).to_dict()]
+    out = reconcile([], prev, set(), _NOW_ISO)
     assert len(out) == 1 and out[0].removedAt is None
 
 
 def test_reconcile_old_ended_dropped():
-    prev = [_twtc("twtc:old", "早就結束的展", "2025-01-01", "2025-01-05").to_dict()]
-    out = reconcile([], prev, {"twtc"}, "2026-08-05T08:00:00+08:00")
+    prev = [_twtc("twtc:old", "早就結束的展", _day(-400), _day(-395)).to_dict()]
+    out = reconcile([], prev, {"twtc"}, _NOW_ISO)
     assert out == []
+
+
+def test_reconcile_ended_within_grace_kept():
+    """閉展未滿 KEEP_ENDED_DAYS 天仍保留(保留期邊界)。"""
+    prev = [_twtc("twtc:recent", "剛結束的展", _day(-40), _day(-10)).to_dict()]
+    out = reconcile([], prev, {"twtc"}, _NOW_ISO)
+    assert len(out) == 1 and out[0].removedAt is not None
+
+
+# ---------- 前次資料檔的容錯 ----------
+# 舊檔是上一個版本的 schema:欄位被改名或新增時,不能讓整支爬蟲中斷(會連新資料都拿不到)。
+
+def _keep_one(prev_entry):
+    """只放一筆前次資料,該來源本次成功但沒回傳它 → 會走「沿用舊資料」那條路。"""
+    return reconcile([], [prev_entry], set(), _NOW_ISO)
+
+
+def test_prev_with_unknown_field_is_ignored():
+    """舊檔多了後來改名的欄位(如 saleStartTime)→ 忽略該欄位,不要 TypeError 整支掛掉。"""
+    p = _twtc("twtc:aaa", "某展", _day(20), _day(25)).to_dict()
+    p["saleStartTime"] = "2026-08-08T12:00"          # 已改名的舊欄位
+    out = _keep_one(p)
+    assert len(out) == 1 and out[0].id == "twtc:aaa"
+
+
+def test_prev_missing_field_is_dropped_not_fatal():
+    """舊檔少了必要欄位 → 丟掉那一筆,其他筆照常保留。"""
+    bad = _twtc("twtc:bad", "缺欄位的展", _day(20), _day(25)).to_dict()
+    del bad["sourceId"]
+    good = _twtc("twtc:good", "正常的展", _day(20), _day(25)).to_dict()
+    out = reconcile([], [bad, good], set(), _NOW_ISO)
+    assert [e.id for e in out] == ["twtc:good"]
+
+
+def test_prev_broken_removedAt_does_not_crash():
+    """removedAt 不是 ISO → 以前 fromisoformat 會拋 ValueError,現在要能容忍。"""
+    p = _twtc("twtc:aaa", "某展", _day(20), _day(25)).to_dict()
+    p["removedAt"] = "壞掉的時間字串"
+    out = _keep_one(p)
+    assert len(out) == 1
+
+
+def test_prev_broken_removedAt_keeps_record():
+    """無法判斷保留期時選擇保留,不要因為解析失敗就默默刪掉使用者的追蹤對象。"""
+    p = _twtc("twtc:aaa", "某展", _day(20), _day(25)).to_dict()
+    p["removedAt"] = "not-a-date"
+    assert len(_keep_one(p)) == 1
+
+
+def test_prev_not_a_dict_is_skipped():
+    """整筆不是物件(例如舊檔被手改成字串)→ 跳過,不影響其他筆。"""
+    good = _twtc("twtc:good", "正常的展", _day(20), _day(25)).to_dict()
+    out = reconcile([], ["壞掉的一筆", None, good], set(), _NOW_ISO)
+    assert [e.id for e in out] == ["twtc:good"]
+
+
+def test_prev_entry_without_id_is_skipped():
+    p = _twtc("twtc:aaa", "某展", _day(20), _day(25)).to_dict()
+    p.pop("id")
+    good = _twtc("twtc:good", "正常的展", _day(20), _day(25)).to_dict()
+    out = reconcile([], [p, good], set(), _NOW_ISO)
+    assert [e.id for e in out] == ["twtc:good"]
+
+
+def test_real_repo_prev_file_still_reconciles():
+    """真的 repo 資料檔(上一個 schema)必須能被還原,這是防回歸的重點。"""
+    import json as _json
+    from pathlib import Path as _Path
+    raw = _Path(__file__).resolve().parents[2] / "data" / "exhibitions.json"
+    if not raw.exists():
+        pytest.skip("沒有 data/exhibitions.json")
+    doc = _json.loads(raw.read_text(encoding="utf-8"))
+    entries = doc.get("exhibitions", [])
+    assert entries, "資料檔應該是空的?"
+    out = reconcile([], entries, set(), _NOW_ISO)
+    # 全部來源都算「本次失敗」→ 除了超過保留期的,其他都該原樣沿用
+    assert len(out) > len(entries) * 0.5, f"沿用比例太低:{len(out)}/{len(entries)}"
 
 
 # ---------- links ----------

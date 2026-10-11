@@ -4,7 +4,9 @@
 用法:
     python scrape.py --out ../data/exhibitions.json
 --out 同時也是前次輸出的位置(對帳 + 失敗沿用都靠它)。
-單源失敗:該源沿用前次資料、sourceStatus 標 stale;全部失敗:exit 1(不覆寫檔案)。
+退出碼:0 = 全部來源成功;2 = 部分來源失敗(檔案仍會寫出,該源標 stale);
+1 = 全部失敗(不覆寫檔案)。CI 用 2 來亮紅燈,避免單源壞掉被埋在綠燈裡。
+壞掉的前次資料檔會備份成 *.bad 後從零開始,不會讓今天也抓不到資料。
 """
 from __future__ import annotations
 
@@ -39,7 +41,22 @@ def main() -> int:
     out_path = Path(args.out)
     prev = {"exhibitions": []}
     if out_path.exists():
-        prev = json.loads(out_path.read_text(encoding="utf-8"))
+        try:
+            loaded = json.loads(out_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                prev = loaded
+            else:
+                raise ValueError(f"頂層應該是物件,實際是 {type(loaded).__name__}")
+        except (json.JSONDecodeError, ValueError, UnicodeDecodeError) as e:
+            # 前次檔案壞掉不該讓今天也抓不到資料。先備份再從零開始,
+            # 這樣壞檔還留著可事後檢查,而使用者明天照樣有資料。
+            bad = out_path.with_suffix(out_path.suffix + ".bad")
+            try:
+                out_path.replace(bad)
+                where = f",已備份到 {bad}"
+            except OSError:
+                where = "(備份失敗)"
+            print(f"前次資料檔無法解析({e}){where},本次視為無前次資料繼續", file=sys.stderr)
 
     session = requests.Session()
     session.headers["User-Agent"] = UA
@@ -87,6 +104,13 @@ def main() -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"輸出 {len(merged)} 筆展覽、{len(links)} 條跨源連結 → {out_path}", file=sys.stderr)
+
+    stale = sorted(n for n, s in status.items() if s != "ok")
+    if stale:
+        # 檔案照寫(部分資料總比沒有好),但用退出碼 2 讓呼叫端知道這是「部分失敗」,
+        # 讓 CI 能亮紅燈。只回 0 的話單源壞掉會被埋在綠燈裡,沒人會發現。
+        print(f"部分來源失敗:{', '.join(stale)} (其餘照常輸出,退出碼 2)", file=sys.stderr)
+        return 2
     return 0
 
 

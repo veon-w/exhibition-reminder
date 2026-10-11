@@ -1,5 +1,11 @@
 # 每日自動抓展覽資料,commit 回 repo 的 data/exhibitions.json
 # 台北時間每天早上 08:00(UTC 00:00)。也可到 Actions 頁面手動觸發(workflow_dispatch)。
+#
+# 失敗可視性:
+#   全部來源失敗 → scrape.py exit 1,不寫檔、不 commit            → 紅燈
+#   部分來源失敗 → scrape.py exit 2,檔案照寫(該源標 stale)、
+#                  仍 commit 保住部分資料,但最後一步主動 exit 1  → 紅燈
+#   全部成功                                                    → 綠燈
 name: scrape-exhibitions
 
 on:
@@ -23,14 +29,54 @@ jobs:
       - name: Install dependencies
         run: pip install -r scraper/requirements.txt
 
-      - name: Run scraper
+      # 測試要先過。fixture 是抓下來的真實網站回應,來源改版時這裡就會紅。
+      - name: Run tests
         working-directory: scraper
-        run: python scrape.py --out ../data/exhibitions.json
+        run: python -m pytest tests/ -q
+
+      - name: Run scraper
+        id: scrape
+        working-directory: scraper
+        # 部分來源失敗會回 2;那不算「這一步的錯」,資料要留給下面 commit。
+        continue-on-error: true
+        run: |
+          set -e
+          python scrape.py \
+            --out ../data/exhibitions.json \
+            --moc-categories "${{ vars.MOC_CATEGORIES || '6,17' }}" \
+            --udn-categories "${{ vars.UDN_CATEGORIES || '231,205' }}"
 
       - name: Commit if changed
+        if: always() && steps.scrape.conclusion != 'failure'
         run: |
+          set -e
           git config user.name "expo-bot"
           git config user.email "actions@users.noreply.github.com"
           git add data/exhibitions.json
-          git diff --cached --quiet || git commit -m "data: $(date +%F) 自動更新展覽資料"
-          git push
+          git diff --cached --quiet && exit 0
+          git commit -m "data: $(date +%F) 自動更新展覽資料"
+          # 排程跑到一半若有別的 commit 進來,push 會因 non-fast-forward 被拒。
+          # 先 rebase 再推,撞到時再重試一次。
+          git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
+          git push || { git pull --rebase --autostash origin "${GITHUB_REF_NAME}"; git push; }
+
+      # 最後才判紅燈:此時資料已 push,不會因為失敗而丟掉當天的部分結果。
+      - name: Report source status
+        if: always()
+        run: |
+          python - <<'PY'
+          import json, os, sys
+          p = "data/exhibitions.json"
+          if not os.path.exists(p):
+              print("::error::沒有產出 data/exhibitions.json(所有來源可能都失敗)")
+              sys.exit(1)
+          doc = json.load(open(p, encoding="utf-8"))
+          status = doc.get("sourceStatus", {})
+          print("generatedAt =", doc.get("generatedAt"))
+          for k, v in status.items():
+              print(f"  {k}: {v}")
+          stale = sorted(k for k, v in status.items() if v != "ok")
+          if stale:
+              print(f"::error::來源失敗:{', '.join(stale)} —— 沿用前次資料,請檢查來源網站是否改版")
+              sys.exit(1)
+          PY
