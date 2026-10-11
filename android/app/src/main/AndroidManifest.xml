@@ -15,7 +15,8 @@
     <application
         android:name=".ExpoApp"
         android:label="展覽提醒"
-        android:icon="@drawable/ic_app"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@style/Theme.ExpoReminder"
         android:networkSecurityConfig="@xml/network_security_config"
         android:supportsRtl="true">
